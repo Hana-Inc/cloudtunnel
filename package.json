@@ -1,0 +1,48 @@
+{
+  "name": "@hana-inc/cloudtunnel",
+  "version": "1.5.0",
+  "description": "Seamlessly connect your local environment to the world through Cloudflare Tunnels",
+  "main": "dist/index.js",
+  "bin": {
+    "cloudtunnel": "./dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hana-Inc/cloudtunnel.git"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "cloudflare",
+    "tunnel",
+    "cli",
+    "cloudflared",
+    "development",
+    "local",
+    "proxy"
+  ],
+  "author": "Hana-Inc <info@hana-inc.com>",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "commander": "^13.1.0",
+    "fs-extra": "^11.3.0",
+    "inquirer": "^12.4.3",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.11.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
