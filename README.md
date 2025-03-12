@@ -182,7 +182,7 @@ cloudtunnel stop
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/cloudtunnel.git
+git clone https://github.com/Hana-Inc/cloudtunnel.git
 cd cloudtunnel
 
 # Install dependencies
