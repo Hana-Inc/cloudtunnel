@@ -151,7 +151,7 @@ cloudtunnel stop
 For best results:
 
 - Use domains that are covered by existing Cloudflare certificates
-- The structure `*.dev.yourdomain.com` works well with Cloudflare's automatic certificates
+- The structure `*.yourdomain.com` works well with Cloudflare's automatic certificates
 - For complex subdomain structures, you may need to set up custom edge certificates in Cloudflare
 
 ## Example Workflow
