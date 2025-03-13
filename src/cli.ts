@@ -35,7 +35,7 @@ const CONFIG_DIR = path.join(
   process.env.HOME || process.env.USERPROFILE || "",
   ".cloudflared"
 );
-const CONFIG_FILE = path.join(CONFIG_DIR, "askhoku-config.json");
+const CONFIG_FILE = path.join(CONFIG_DIR, "cloudtunnel-config.json");
 const CERT_FILE = path.join(CONFIG_DIR, "cert.pem");
 
 /**
@@ -162,7 +162,7 @@ program
         console.log(
           chalk.yellow(`You can either:
   1. Remove the certificate manually: rm ${CERT_FILE}
-  2. Run the command with --force flag: askhoku login --force`)
+  2. Run the command with --force flag: cloudtunnel login --force`)
         );
       } else {
         console.error(
@@ -196,7 +196,7 @@ program
       );
       console.log(
         chalk.yellow(
-          "Please install cloudflared first. Run 'askhoku login' for installation instructions."
+          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
         )
       );
       process.exit(1);
@@ -208,7 +208,9 @@ program
         chalk.red("Error: You need to log in to Cloudflare first.")
       );
       console.log(
-        chalk.yellow("Please run 'askhoku login' before initializing a tunnel.")
+        chalk.yellow(
+          "Please run 'cloudtunnel login' before initializing a tunnel."
+        )
       );
       process.exit(1);
     }
@@ -351,7 +353,7 @@ program
         );
         console.log(
           chalk.cyan(
-            "Next step: Add services to your tunnel with 'askhoku add-service'"
+            "Next step: Add services to your tunnel with 'cloudtunnel add-service'"
           )
         );
       } else {
@@ -397,7 +399,7 @@ program
       );
       console.log(
         chalk.yellow(
-          "Please install cloudflared first. Run 'askhoku login' for installation instructions."
+          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
         )
       );
       process.exit(1);
@@ -409,7 +411,7 @@ program
         chalk.red("Error: You need to log in to Cloudflare first.")
       );
       console.log(
-        chalk.yellow("Please run 'askhoku login' before adding services.")
+        chalk.yellow("Please run 'cloudtunnel login' before adding services.")
       );
       process.exit(1);
     }
@@ -417,7 +419,9 @@ program
     let config = loadConfig();
     if (!config.tunnelId) {
       console.log(
-        chalk.red("No tunnel found in config. Please run `askhoku init` first.")
+        chalk.red(
+          "No tunnel found in config. Please run `cloudtunnel init` first."
+        )
       );
       return;
     }
@@ -533,7 +537,7 @@ program
     // Show next steps
     console.log(chalk.cyan("\nNext steps:"));
     console.log(chalk.cyan("1. Start your service locally on port " + port));
-    console.log(chalk.cyan("2. Run 'askhoku run' to start the tunnel"));
+    console.log(chalk.cyan("2. Run 'cloudtunnel run' to start the tunnel"));
     console.log(chalk.cyan("3. Access your service at https://" + hostname));
   });
 
@@ -552,7 +556,7 @@ program
       );
       console.log(
         chalk.yellow(
-          "Please install cloudflared first. Run 'askhoku login' for installation instructions."
+          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
         )
       );
       process.exit(1);
@@ -562,7 +566,7 @@ program
     if (!config.tunnelId) {
       console.log(
         chalk.yellow(
-          "No tunnel configured. Please run `askhoku init` first to set up a tunnel."
+          "No tunnel configured. Please run `cloudtunnel init` first to set up a tunnel."
         )
       );
       return;
@@ -571,7 +575,7 @@ program
     if (!config.services || config.services.length === 0) {
       console.log(
         chalk.yellow(
-          "No services found for your tunnel. Add one with `askhoku add-service`."
+          "No services found for your tunnel. Add one with `cloudtunnel add-service`."
         )
       );
       return;
@@ -620,7 +624,7 @@ program
 
     console.log(
       chalk.cyan("\nTo run your tunnel with these services: ") +
-        chalk.yellow("askhoku run")
+        chalk.yellow("cloudtunnel run")
     );
   });
 
@@ -639,7 +643,7 @@ program
       );
       console.log(
         chalk.yellow(
-          "Please install cloudflared first. Run 'askhoku login' for installation instructions."
+          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
         )
       );
       process.exit(1);
@@ -651,7 +655,7 @@ program
         chalk.red("Error: You need to log in to Cloudflare first.")
       );
       console.log(
-        chalk.yellow("Please run 'askhoku login' before running a tunnel.")
+        chalk.yellow("Please run 'cloudtunnel login' before running a tunnel.")
       );
       process.exit(1);
     }
@@ -659,7 +663,9 @@ program
     const config = loadConfig();
     if (!config.tunnelId) {
       console.log(
-        chalk.red("No tunnel found in config. Please run `askhoku init` first.")
+        chalk.red(
+          "No tunnel found in config. Please run `cloudtunnel init` first."
+        )
       );
       return;
     }
@@ -673,7 +679,7 @@ program
       );
       console.log(
         chalk.yellow(
-          "The tunnel will run but won't route any traffic. Add services with 'askhoku add-service'."
+          "The tunnel will run but won't route any traffic. Add services with 'cloudtunnel add-service'."
         )
       );
 
@@ -694,7 +700,7 @@ program
       if (!answers.proceed) {
         console.log(
           chalk.cyan(
-            "Tunnel startup cancelled. Add services first with 'askhoku add-service'."
+            "Tunnel startup cancelled. Add services first with 'cloudtunnel add-service'."
           )
         );
         return;
@@ -811,12 +817,14 @@ program
             )
           );
           console.log(
-            chalk.yellow("Try running 'askhoku init' to create a new tunnel.")
+            chalk.yellow(
+              "Try running 'cloudtunnel init' to create a new tunnel."
+            )
           );
         } else if (errorMsg.includes("credentials")) {
           console.log(
             chalk.yellow(
-              "Credentials file may be missing. Try re-creating the tunnel with 'askhoku init'."
+              "Credentials file may be missing. Try re-creating the tunnel with 'cloudtunnel init'."
             )
           );
         }
@@ -833,7 +841,7 @@ program
   .action(() => {
     // Using require for package.json since it's a direct sibling to this file at runtime
     const packageJson = require("../package.json");
-    console.log(`askhoku-cli version: ${chalk.green(packageJson.version)}`);
+    console.log(`cloudtunnel version: ${chalk.green(packageJson.version)}`);
 
     try {
       const cloudflaredVersion = execSync("cloudflared --version")
@@ -860,7 +868,7 @@ program
       );
       console.log(
         chalk.yellow(
-          "Please install cloudflared first. Run 'askhoku login' for installation instructions."
+          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
         )
       );
       process.exit(1);
@@ -869,7 +877,9 @@ program
     const config = loadConfig();
     if (!config.tunnelId) {
       console.log(
-        chalk.red("No tunnel found in config. Please run `askhoku init` first.")
+        chalk.red(
+          "No tunnel found in config. Please run `cloudtunnel init` first."
+        )
       );
       return;
     }
@@ -954,225 +964,13 @@ program
       console.log(chalk.cyan(`Stopping tunnel process (PID: ${pid})...`));
 
       if (process.platform === "win32") {
-        execSync(`taskkill ${options.force ? "/F" : ""} /PID ${pid}`);
+        // Windows
+        execSync(`taskkill /PID ${pid} /F`);
       } else {
-        execSync(`kill ${options.force ? "-9" : ""} ${pid}`);
+        // Unix-like (macOS, Linux)
+        execSync(`kill -9 ${pid}`);
       }
-
-      console.log(chalk.green(`Tunnel stopped successfully.`));
-
-      // Try to verify the process is really gone
-      setTimeout(() => {
-        try {
-          if (process.platform === "win32") {
-            execSync(`tasklist /FI "PID eq ${pid}" /FO CSV`);
-            console.log(
-              chalk.yellow(
-                "Warning: The process may still be running. You might need to use --force option."
-              )
-            );
-          } else {
-            execSync(`ps -p ${pid}`);
-            console.log(
-              chalk.yellow(
-                "Warning: The process may still be running. You might need to use --force option."
-              )
-            );
-          }
-        } catch (err) {
-          // If the process is gone, the command will fail, which is good
-          console.log(chalk.green("Verified process is no longer running."));
-        }
-      }, 500);
     } catch (err) {
       console.error(chalk.red("Error stopping tunnel:"), err);
-      if (options.force) {
-        console.log(
-          chalk.yellow(
-            "You used --force but the operation still failed. The tunnel might not be running or you might need elevated permissions."
-          )
-        );
-      } else {
-        console.log(
-          chalk.yellow("Try using the --force option: askhoku stop --force")
-        );
-      }
     }
   });
-
-// -------------------------------
-// Command: remove-service
-// -------------------------------
-program
-  .command("remove-service")
-  .description("Remove a service from the tunnel configuration")
-  .option("-f, --force", "Skip confirmation prompt")
-  .option("-d, --delete-dns", "Also delete the DNS CNAME record in Cloudflare")
-  .action(async (options: { force?: boolean; deleteDns?: boolean }) => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared first. Run 'askhoku login' for installation instructions."
-        )
-      );
-      process.exit(1);
-    }
-
-    const config = loadConfig();
-    if (!config.tunnelId) {
-      console.log(
-        chalk.red("No tunnel found in config. Please run `askhoku init` first.")
-      );
-      return;
-    }
-
-    if (!config.services || config.services.length === 0) {
-      console.log(
-        chalk.yellow(
-          "No services found for your tunnel. Add one with `askhoku add-service`."
-        )
-      );
-      return;
-    }
-
-    // Create a list of services for the user to choose from
-    const choices = config.services.map((service, index) => ({
-      name: `${index + 1}. ${service.hostname} → ${service.service}`,
-      value: index,
-    }));
-
-    interface ServiceSelection {
-      serviceIndex: number;
-    }
-
-    // Let the user select which service to remove
-    const answer = await inquirer.prompt<ServiceSelection>([
-      {
-        type: "list",
-        name: "serviceIndex",
-        message: "Select the service you want to remove:",
-        choices,
-      },
-    ]);
-
-    const selectedIndex = answer.serviceIndex;
-    const selectedService = config.services[selectedIndex];
-
-    // Confirm removal
-    if (!options.force) {
-      const confirmAnswer = await inquirer.prompt([
-        {
-          type: "confirm",
-          name: "confirm",
-          message: `Are you sure you want to remove ${chalk.bold(
-            selectedService.hostname
-          )}?`,
-          default: false,
-        },
-      ]);
-
-      if (!confirmAnswer.confirm) {
-        console.log(chalk.yellow("Operation cancelled."));
-        return;
-      }
-    }
-
-    try {
-      // Remove the service from the configuration
-      config.services.splice(selectedIndex, 1);
-      saveConfig(config);
-
-      console.log(
-        chalk.green(
-          `Service ${chalk.bold(
-            selectedService.hostname
-          )} has been removed from the tunnel configuration.`
-        )
-      );
-
-      // Delete DNS record if requested
-      if (options.deleteDns) {
-        console.log(
-          chalk.cyan(
-            `Attempting to delete DNS record for ${selectedService.hostname}...`
-          )
-        );
-
-        try {
-          // Unfortunately, cloudflared CLI doesn't provide a direct command to delete DNS records
-          // So we'll provide guidance for the user to do it manually
-          console.log(
-            chalk.yellow(
-              "Cloudflared CLI doesn't provide a direct command to delete DNS records."
-            )
-          );
-          console.log(
-            chalk.yellow(
-              "Please delete the DNS record manually from your Cloudflare dashboard:"
-            )
-          );
-          console.log(chalk.yellow("1. Log in to your Cloudflare account"));
-          console.log(
-            chalk.yellow("2. Select the domain and go to the DNS tab")
-          );
-          console.log(
-            chalk.yellow(
-              `3. Find the CNAME record for ${selectedService.hostname} and delete it`
-            )
-          );
-        } catch (dnsErr) {
-          console.error(chalk.red("Error:"), dnsErr);
-        }
-      } else {
-        // Note about DNS
-        console.log(
-          chalk.yellow(
-            "Note: This only removes the service from your local tunnel configuration."
-          )
-        );
-        console.log(
-          chalk.yellow(
-            "The DNS record in Cloudflare still exists. To remove it, use '--delete-dns' next time or delete it from the Cloudflare dashboard."
-          )
-        );
-      }
-
-      // If this was the last service, suggest what to do
-      if (config.services.length === 0) {
-        console.log(
-          chalk.cyan(
-            "There are no more services configured for this tunnel. You can:"
-          )
-        );
-        console.log(
-          chalk.cyan("1. Add new services with 'askhoku add-service'")
-        );
-        console.log(
-          chalk.cyan(
-            "2. Delete the tunnel completely from Cloudflare if no longer needed"
-          )
-        );
-      } else {
-        console.log(
-          chalk.cyan(`Remaining services: ${config.services.length}`)
-        );
-        console.log(
-          chalk.cyan(
-            "You will need to restart your tunnel for changes to take effect:"
-          )
-        );
-        console.log(chalk.cyan("1. Stop the tunnel: askhoku stop"));
-        console.log(chalk.cyan("2. Start it again: askhoku run"));
-      }
-    } catch (err) {
-      console.error(chalk.red("Error removing service:"), err);
-      process.exit(1);
-    }
-  });
-
-// Parse the command line arguments
-program.parse(process.argv);

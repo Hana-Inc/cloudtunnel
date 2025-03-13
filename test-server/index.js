@@ -7,7 +7,7 @@ const server = http.createServer((req, res) => {
     <!DOCTYPE html>
     <html>
       <head>
-        <title>AskHoku Tunnel Test</title>
+        <title>CloudTunnel Tunnel Test</title>
         <style>
           body {
             font-family: Arial, sans-serif;
@@ -37,7 +37,7 @@ const server = http.createServer((req, res) => {
         </style>
       </head>
       <body>
-        <h1>AskHoku Tunnel Test</h1>
+        <h1>CloudTunnel Tunnel Test</h1>
         <div class="success">
           <h2>🎉 Success! The tunnel is working.</h2>
           <p>Your local service is now accessible through Cloudflare Tunnel.</p>

@@ -1,6 +1,6 @@
 {
   "name": "cloudtunnel",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "Seamlessly connect your local environment to the world through Cloudflare Tunnels",
   "main": "dist/index.js",
   "bin": {

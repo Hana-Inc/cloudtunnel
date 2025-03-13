@@ -1,6 +1,6 @@
 # ☁️🚇 CloudTunnel
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue)
+![Version](https://img.shields.io/badge/version-1.5.3-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Cloudflare](https://img.shields.io/badge/cloudflare-integrated-orange)
 
@@ -116,6 +116,28 @@ CloudTunnel stores its configuration in `~/.cloudflared/cloudtunnel-config.json`
 
 - Your tunnel ID and name
 - Services you've configured (hostname, port, protocol)
+
+## Testing Your Tunnel
+
+CloudTunnel includes a simple test server that helps you verify your tunnel setup:
+
+```bash
+# Clone the repository
+git clone https://github.com/Hana-Inc/cloudtunnel.git
+cd cloudtunnel
+
+# Start the test server
+node test-server/index.js
+```
+
+This will start a basic HTTP server on port 3000. You can add this server to your tunnel with:
+
+```bash
+cloudtunnel add-service
+# Enter your desired hostname and port 3000
+```
+
+The test server will display request details and confirm that your tunnel is working properly.
 
 ## Troubleshooting
 
