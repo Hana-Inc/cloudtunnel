@@ -636,7 +636,7 @@ program
     // Generate config file
     const configPath = path.join(CONFIG_DIR, `tunnel-${tunnelId}.yml`);
     
-    const ingressRules = tunnel.services.map(srv => ({
+    const ingressRules: Array<{ hostname?: string; service: string }> = tunnel.services.map(srv => ({
       hostname: srv.hostname,
       service: srv.service,
     }));
