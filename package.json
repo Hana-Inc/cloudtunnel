@@ -5,11 +5,11 @@
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "cloudtunnel": "./dist/index.js"
+    "cloudtunnel": "dist/index.js"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Hana-Inc/cloudtunnel.git"
+    "url": "git+https://github.com/Hana-Inc/cloudtunnel.git"
   },
   "scripts": {
     "build": "tsc",
