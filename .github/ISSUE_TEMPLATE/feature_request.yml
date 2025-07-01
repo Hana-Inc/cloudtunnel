@@ -1,0 +1,152 @@
+# Contributing to CloudTunnel
+
+Thank you for your interest in contributing to CloudTunnel! We welcome contributions from the community.
+
+## 📋 Prerequisites
+
+- Node.js 16.x or higher
+- npm or yarn
+- Git
+- cloudflared (optional for development, required for testing)
+
+## 🚀 Getting Started
+
+1. Fork the repository
+2. Clone your fork:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/cloudtunnel.git
+   cd cloudtunnel
+   ```
+
+3. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+4. Create a new branch:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+## 🛠️ Development
+
+### Running in Development Mode
+
+```bash
+npm run dev
+```
+
+This uses `tsx` to run TypeScript directly without building.
+
+### Building
+
+```bash
+npm run build
+```
+
+### Testing
+
+```bash
+# Run basic tests
+npm test
+
+# Test the CLI commands
+npm run build
+node dist/index.js version
+node dist/index.js --help
+
+# Run the test server
+npm run test-server
+```
+
+### Linting
+
+```bash
+npm run lint
+```
+
+## 📝 Code Style
+
+- Use TypeScript for all new code
+- Follow the existing code style
+- Use meaningful variable and function names
+- Add comments for complex logic
+- Keep functions small and focused
+
+## 🧪 Testing Your Changes
+
+1. Build the project: `npm run build`
+2. Link globally for testing: `npm link`
+3. Test your changes: `cloudtunnel [command]`
+4. Unlink when done: `npm unlink`
+
+## 📦 Submitting Changes
+
+1. Commit your changes:
+   ```bash
+   git add .
+   git commit -m "feat: add new feature"
+   ```
+
+   Follow [Conventional Commits](https://www.conventionalcommits.org/):
+   - `feat:` New feature
+   - `fix:` Bug fix
+   - `docs:` Documentation changes
+   - `style:` Code style changes
+   - `refactor:` Code refactoring
+   - `test:` Test changes
+   - `chore:` Build process or auxiliary tool changes
+
+2. Push to your fork:
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+3. Create a Pull Request
+
+## 🚀 Release Process
+
+Releases are managed by maintainers using GitHub Actions:
+
+1. Manual trigger via GitHub Actions:
+   - Go to Actions → CloudTunnel CI/CD
+   - Click "Run workflow"
+   - Select release type (patch, minor, major)
+
+2. Or use the release script:
+   ```bash
+   ./scripts/release.sh [patch|minor|major]
+   ```
+
+The release process will:
+- Run all tests
+- Bump the version
+- Create a git tag
+- Create a GitHub release
+- Publish to npm
+
+## 📋 Pull Request Guidelines
+
+- Fill out the PR template completely
+- Link any related issues
+- Ensure all tests pass
+- Update documentation if needed
+- Add tests for new features
+- Keep PRs focused on a single change
+
+## 🐛 Reporting Issues
+
+- Use the issue templates
+- Provide clear reproduction steps
+- Include your environment details
+- Search existing issues first
+
+## 💡 Feature Requests
+
+- Use the feature request template
+- Explain the use case
+- Consider implementing it yourself!
+
+## 📄 License
+
+By contributing, you agree that your contributions will be licensed under the MIT License.

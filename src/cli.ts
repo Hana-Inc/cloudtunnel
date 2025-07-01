@@ -10,10 +10,12 @@ import YAML from "yaml";
 import os from "os";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
+import { createRequire } from "module";
 
 // Get the directory of the current module for package.json access
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const require = createRequire(import.meta.url);
 
 // Config types
 interface Service {
@@ -162,7 +164,7 @@ function validateHostname(hostname: string): boolean {
 
 function checkServiceHealth(port: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const net = require("net");
+    const net = createRequire(import.meta.url)("net");
     const client = new net.Socket();
     
     client.setTimeout(1000);
@@ -639,7 +641,7 @@ program
       service: srv.service,
     }));
     
-    ingressRules.push({ hostname: "*.localhost", service: "http_status:404" });
+    ingressRules.push({ service: "http_status:404" });
     
     const tunnelConfig = {
       tunnel: tunnelId,
@@ -866,10 +868,10 @@ program
     console.log(`cloudtunnel: ${chalk.green(getPackageVersion())}`);
     
     try {
-      const cloudflaredVersion = execSync("cloudflared --version").toString().trim();
+      const cloudflaredVersion = execSync("cloudflared --version 2>&1").toString().trim();
       console.log(`cloudflared: ${chalk.green(cloudflaredVersion)}`);
     } catch (err) {
-      console.log(`cloudflared: ${chalk.red("Not installed")}`);
+      console.log(`cloudflared: ${chalk.yellow("Not installed (optional for version check)")}`);
     }
     
     console.log(`Config version: ${chalk.green(CONFIG_VERSION)}`);
