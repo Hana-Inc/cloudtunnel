@@ -1,4 +1,4 @@
 #!/usr/bin/env node
 
-// This file serves as the main entry point for the CLI
-import "./cli";
+// Main entry point for the CloudTunnel CLI
+import "./cli.js";

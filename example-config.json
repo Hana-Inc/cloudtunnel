@@ -1,0 +1,43 @@
+{
+  "version": "2.0.0",
+  "activeTunnel": "550e8400-e29b-41d4-a716-446655440000",
+  "tunnels": {
+    "550e8400-e29b-41d4-a716-446655440000": {
+      "tunnelName": "production",
+      "tunnelId": "550e8400-e29b-41d4-a716-446655440000",
+      "services": [
+        {
+          "hostname": "app.example.com",
+          "service": "http://localhost:3000",
+          "protocol": "http",
+          "port": "3000",
+          "createdAt": "2024-01-15T10:30:00.000Z"
+        },
+        {
+          "hostname": "api.example.com",
+          "service": "http://localhost:4000",
+          "protocol": "http",
+          "port": "4000",
+          "createdAt": "2024-01-15T10:35:00.000Z"
+        }
+      ],
+      "createdAt": "2024-01-15T10:00:00.000Z",
+      "lastUsed": "2024-01-20T15:30:00.000Z"
+    },
+    "660e8400-e29b-41d4-a716-446655440001": {
+      "tunnelName": "staging",
+      "tunnelId": "660e8400-e29b-41d4-a716-446655440001",
+      "services": [
+        {
+          "hostname": "staging.example.com",
+          "service": "http://localhost:3001",
+          "protocol": "http",
+          "port": "3001",
+          "createdAt": "2024-01-16T09:00:00.000Z"
+        }
+      ],
+      "createdAt": "2024-01-16T08:30:00.000Z",
+      "lastUsed": "2024-01-19T12:00:00.000Z"
+    }
+  }
+}

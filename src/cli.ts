@@ -4,23 +4,25 @@ import { Command } from "commander";
 import inquirer from "inquirer";
 import fs from "fs-extra";
 import chalk from "chalk";
-import { execSync, exec, ExecSyncOptions } from "child_process";
+import { execSync, exec, spawn, SpawnOptions } from "child_process";
 import path from "path";
 import YAML from "yaml";
+import os from "os";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
 
-const program = new Command();
+// Get the directory of the current module for package.json access
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // Config types
 interface Service {
   hostname: string;
   service: string;
   createdAt?: string;
-}
-
-interface Config {
-  tunnelName: string;
-  tunnelId: string;
-  services: Service[];
+  updatedAt?: string;
+  protocol?: string;
+  port?: string;
 }
 
 interface Tunnel {
@@ -28,19 +30,52 @@ interface Tunnel {
   name: string;
   created_at?: string;
   connections?: any[];
+  status?: string;
 }
 
-// Default config paths
-const CONFIG_DIR = path.join(
-  process.env.HOME || process.env.USERPROFILE || "",
-  ".cloudflared"
-);
+interface Config {
+  version: string;
+  activeTunnel?: string;
+  tunnels: {
+    [tunnelId: string]: {
+      tunnelName: string;
+      tunnelId: string;
+      services: Service[];
+      createdAt: string;
+      lastUsed?: string;
+    };
+  };
+}
+
+// Constants
+const CONFIG_VERSION = "2.0.0";
+const CONFIG_DIR = path.join(os.homedir(), ".cloudflared");
 const CONFIG_FILE = path.join(CONFIG_DIR, "cloudtunnel-config.json");
 const CERT_FILE = path.join(CONFIG_DIR, "cert.pem");
+const LOG_FILE = path.join(CONFIG_DIR, "cloudtunnel.log");
 
-/**
- * Check if cloudflared is installed
- */
+// Initialize program
+const program = new Command();
+
+// Utility functions
+function log(message: string, level: "info" | "error" | "warn" = "info") {
+  const timestamp = new Date().toISOString();
+  const coloredMessage = 
+    level === "error" ? chalk.red(message) :
+    level === "warn" ? chalk.yellow(message) :
+    chalk.cyan(message);
+  
+  console.log(coloredMessage);
+  
+  // Also write to log file
+  try {
+    fs.ensureDirSync(CONFIG_DIR);
+    fs.appendFileSync(LOG_FILE, `[${timestamp}] [${level.toUpperCase()}] ${message}\n`);
+  } catch (err) {
+    // Ignore logging errors
+  }
+}
+
 function checkCloudflaredInstalled(): boolean {
   try {
     execSync("cloudflared --version", { stdio: "ignore" });
@@ -50,416 +85,337 @@ function checkCloudflaredInstalled(): boolean {
   }
 }
 
-/**
- * Load local config. Creates an empty JSON if not found.
- */
-function loadConfig(): Config {
-  if (!fs.existsSync(CONFIG_FILE)) {
-    return { tunnelName: "", tunnelId: "", services: [] };
-  }
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
-  } catch (error) {
-    console.error(
-      chalk.red(`Error parsing config file at ${CONFIG_FILE}:`),
-      error
-    );
-    return { tunnelName: "", tunnelId: "", services: [] };
+function ensureCloudflaredInstalled(): void {
+  if (!checkCloudflaredInstalled()) {
+    log("Error: cloudflared is not installed or not in the PATH.", "error");
+    log("Please install cloudflared using one of the following methods:", "warn");
+    log("  macOS: brew install cloudflare/cloudflare/cloudflared", "info");
+    log("  Windows: choco install cloudflared", "info");
+    log("  Linux: See https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation", "info");
+    process.exit(1);
   }
 }
 
-/**
- * Save local config.
- */
+function isLoggedIn(): boolean {
+  return fs.existsSync(CERT_FILE);
+}
+
+function ensureLoggedIn(): void {
+  if (!isLoggedIn()) {
+    log("Error: You need to log in to Cloudflare first.", "error");
+    log("Please run 'cloudtunnel login' before continuing.", "warn");
+    process.exit(1);
+  }
+}
+
+function loadConfig(): Config {
+  if (!fs.existsSync(CONFIG_FILE)) {
+    return { version: CONFIG_VERSION, tunnels: {} };
+  }
+  
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+    
+    // Migrate old config format if needed
+    if (!config.version || config.version !== CONFIG_VERSION) {
+      if (config.tunnelId && config.tunnelName) {
+        // Old single-tunnel format
+        const oldConfig = config;
+        return {
+          version: CONFIG_VERSION,
+          activeTunnel: oldConfig.tunnelId,
+          tunnels: {
+            [oldConfig.tunnelId]: {
+              tunnelName: oldConfig.tunnelName,
+              tunnelId: oldConfig.tunnelId,
+              services: oldConfig.services || [],
+              createdAt: new Date().toISOString()
+            }
+          }
+        };
+      }
+    }
+    
+    return config;
+  } catch (error) {
+    log(`Error parsing config file: ${error}`, "error");
+    return { version: CONFIG_VERSION, tunnels: {} };
+  }
+}
+
 function saveConfig(config: Config): void {
   fs.ensureDirSync(CONFIG_DIR);
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
-/**
- * Check if already logged in to Cloudflare
- */
-function isLoggedIn(): boolean {
-  return fs.existsSync(CERT_FILE);
+function getActiveTunnel(config: Config) {
+  if (!config.activeTunnel || !config.tunnels[config.activeTunnel]) {
+    return null;
+  }
+  return config.tunnels[config.activeTunnel];
 }
 
-// -------------------------------
-// Command: login
-// -------------------------------
+function validateHostname(hostname: string): boolean {
+  const hostnameRegex = /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+  return hostnameRegex.test(hostname);
+}
+
+function checkServiceHealth(port: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const net = require("net");
+    const client = new net.Socket();
+    
+    client.setTimeout(1000);
+    
+    client.on("connect", () => {
+      client.destroy();
+      resolve(true);
+    });
+    
+    client.on("error", () => {
+      resolve(false);
+    });
+    
+    client.on("timeout", () => {
+      client.destroy();
+      resolve(false);
+    });
+    
+    client.connect(parseInt(port), "localhost");
+  });
+}
+
+function getTunnelStatus(tunnelId: string): "running" | "stopped" | "unknown" {
+  try {
+    const tunnels = JSON.parse(
+      execSync("cloudflared tunnel list --output json").toString()
+    ) as Tunnel[];
+    
+    const tunnel = tunnels.find(t => t.id === tunnelId);
+    if (!tunnel) return "unknown";
+    
+    // Check if tunnel has active connections
+    if (tunnel.connections && tunnel.connections.length > 0) {
+      return "running";
+    }
+    
+    // Also check local processes
+    if (process.platform === "win32") {
+      try {
+        const result = execSync(`wmic process where "commandline like '%${tunnelId}%' and name='cloudflared.exe'" get processid`).toString();
+        if (result.includes(tunnelId)) return "running";
+      } catch (e) {
+        // Process not found
+      }
+    } else {
+      try {
+        execSync(`pgrep -f "cloudflared.*${tunnelId}"`);
+        return "running";
+      } catch (e) {
+        // Process not found
+      }
+    }
+    
+    return "stopped";
+  } catch (error) {
+    return "unknown";
+  }
+}
+
+function getPackageVersion(): string {
+  try {
+    const packagePath = path.join(__dirname, "..", "package.json");
+    const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+    return packageJson.version;
+  } catch (error) {
+    return "unknown";
+  }
+}
+
+// Commands
+
+program
+  .name("cloudtunnel")
+  .description("A user-friendly CLI for managing Cloudflare Tunnels")
+  .version(getPackageVersion());
+
+// Login command
 program
   .command("login")
-  .description(
-    "Authenticate with your Cloudflare account (cloudflared tunnel login)."
-  )
-  .option("-f, --force", "Force login even if cert.pem already exists")
+  .description("Authenticate with your Cloudflare account")
+  .option("-f, --force", "Force login even if already authenticated")
   .action(async (options: { force?: boolean }) => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared using one of the following methods:"
-        )
-      );
-      console.log(
-        chalk.cyan("  macOS: brew install cloudflare/cloudflare/cloudflared")
-      );
-      console.log(chalk.cyan("  Windows: choco install cloudflared"));
-      console.log(
-        chalk.cyan(
-          "  Linux: See https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation"
-        )
-      );
-      process.exit(1);
-    }
-
-    // Check if cert already exists
+    ensureCloudflaredInstalled();
+    
     if (isLoggedIn() && !options.force) {
       const answers = await inquirer.prompt([
         {
           type: "confirm",
           name: "overwrite",
-          message: `A Cloudflare certificate already exists at ${CERT_FILE}. Overwrite it?`,
+          message: `Already logged in. Do you want to re-authenticate?`,
           default: false,
         },
       ]);
-
+      
       if (!answers.overwrite) {
-        console.log(chalk.yellow("Login aborted. Use existing certificate."));
+        log("Using existing authentication.", "info");
         return;
       }
-      // Delete the existing cert if user wants to overwrite
+      
       fs.removeSync(CERT_FILE);
     }
-
+    
     try {
-      console.log(chalk.cyan("Opening browser to login with Cloudflare..."));
+      log("Opening browser to login with Cloudflare...", "info");
       execSync("cloudflared tunnel login", { stdio: "inherit" });
-
-      // Verify that login was actually successful by checking for cert.pem
+      
       if (isLoggedIn()) {
-        console.log(
-          chalk.green("Login complete! Certificate successfully created.")
-        );
+        log("Login successful! ✓", "info");
       } else {
-        console.error(
-          chalk.red("Login may have failed. Certificate not found at: ") +
-            chalk.yellow(CERT_FILE)
-        );
+        log("Login failed. Certificate not found.", "error");
         process.exit(1);
       }
     } catch (err) {
-      // Check specific error patterns
-      const errorMsg = String(err);
-      if (errorMsg.includes("existing certificate")) {
-        console.error(
-          chalk.red(
-            "Error: There's an existing certificate that needs to be handled."
-          )
-        );
-        console.log(
-          chalk.yellow(`You can either:
-  1. Remove the certificate manually: rm ${CERT_FILE}
-  2. Run the command with --force flag: cloudtunnel login --force`)
-        );
-      } else {
-        console.error(
-          chalk.red("Error running `cloudflared tunnel login`: "),
-          err
-        );
-      }
+      log(`Login error: ${err}`, "error");
       process.exit(1);
     }
   });
 
-// -------------------------------
-// Command: init
-// -------------------------------
+// Init command
 program
   .command("init")
-  .description("Initialize a new Cloudflare Tunnel (or use an existing one).")
-  .option(
-    "-u, --use-existing",
-    "Use an existing tunnel by ID instead of creating a new one"
-  )
-  .option(
-    "-f, --force",
-    "Force creation of a new tunnel even if one exists in config"
-  )
-  .action(async (options: { useExisting?: boolean; force?: boolean }) => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
-        )
-      );
-      process.exit(1);
-    }
-
-    // Check if the user is logged in
-    if (!isLoggedIn()) {
-      console.error(
-        chalk.red("Error: You need to log in to Cloudflare first.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please run 'cloudtunnel login' before initializing a tunnel."
-        )
-      );
-      process.exit(1);
-    }
-
-    let config = loadConfig();
-
-    if (config.tunnelId && !options.force && !options.useExisting) {
-      console.log(
-        chalk.yellow(
-          "A tunnel is already initialized in your config. Current tunnel:"
-        )
-      );
-      console.log(`Tunnel Name: ${chalk.cyan(config.tunnelName)}`);
-      console.log(`Tunnel ID:   ${chalk.cyan(config.tunnelId)}`);
-
-      const answers = await inquirer.prompt([
-        {
-          type: "confirm",
-          name: "keepExisting",
-          message: "Do you want to keep using this tunnel?",
-          default: true,
-        },
-      ]);
-
-      if (answers.keepExisting) {
-        console.log(chalk.green("Continuing with existing tunnel."));
-        return;
-      } else {
-        console.log(chalk.cyan("Creating a new tunnel instead..."));
-      }
-    }
-
-    // Handle --use-existing option
+  .description("Initialize a new Cloudflare Tunnel")
+  .option("-n, --name <name>", "Tunnel name (skips prompt)")
+  .option("-u, --use-existing", "Select from existing tunnels")
+  .action(async (options: { name?: string; useExisting?: boolean }) => {
+    ensureCloudflaredInstalled();
+    ensureLoggedIn();
+    
+    const config = loadConfig();
+    
     if (options.useExisting) {
-      const existingTunnels: {
-        name: string;
-        value: { id: string; name: string };
-      }[] = [];
       try {
-        const output = execSync(
-          "cloudflared tunnel list --output json"
-        ).toString();
+        const output = execSync("cloudflared tunnel list --output json").toString();
         const tunnels: Tunnel[] = JSON.parse(output);
-
+        
         if (tunnels.length === 0) {
-          console.log(
-            chalk.yellow(
-              "No existing tunnels found in your Cloudflare account."
-            )
-          );
-          console.log(
-            chalk.cyan("Would you like to create a new tunnel instead?")
-          );
-
+          log("No existing tunnels found.", "warn");
           const answers = await inquirer.prompt([
             {
               type: "confirm",
               name: "createNew",
-              message: "Create a new tunnel?",
+              message: "Create a new tunnel instead?",
               default: true,
             },
           ]);
-
-          if (!answers.createNew) {
-            return;
-          }
-          // If they want to create a new one, continue to the tunnel creation flow below
+          
+          if (!answers.createNew) return;
         } else {
-          // Format tunnels for selection
-          tunnels.forEach((tunnel) => {
-            existingTunnels.push({
-              name: `${tunnel.name} (${tunnel.id})`,
-              value: { id: tunnel.id, name: tunnel.name },
-            });
-          });
-
-          interface TunnelSelection {
-            tunnel: { id: string; name: string };
-          }
-
-          const answer = await inquirer.prompt<TunnelSelection>([
+          const choices = tunnels.map(t => ({
+            name: `${t.name} (${t.id}) - ${getTunnelStatus(t.id)}`,
+            value: { id: t.id, name: t.name },
+          }));
+          
+          const answer = await inquirer.prompt([
             {
               type: "list",
               name: "tunnel",
-              message: "Select an existing tunnel to use:",
-              choices: existingTunnels,
+              message: "Select a tunnel:",
+              choices,
             },
           ]);
-
-          config.tunnelName = answer.tunnel.name;
-          config.tunnelId = answer.tunnel.id;
+          
+          config.tunnels[answer.tunnel.id] = {
+            tunnelName: answer.tunnel.name,
+            tunnelId: answer.tunnel.id,
+            services: config.tunnels[answer.tunnel.id]?.services || [],
+            createdAt: config.tunnels[answer.tunnel.id]?.createdAt || new Date().toISOString(),
+            lastUsed: new Date().toISOString(),
+          };
+          config.activeTunnel = answer.tunnel.id;
           saveConfig(config);
-          console.log(
-            chalk.green(
-              `Now using tunnel: ${config.tunnelName} (ID: ${config.tunnelId})`
-            )
-          );
+          log(`Selected tunnel: ${answer.tunnel.name}`, "info");
           return;
         }
       } catch (err) {
-        console.error(chalk.red("Error listing existing tunnels:"), err);
-        console.log(chalk.yellow("Falling back to creating a new tunnel..."));
+        log(`Error listing tunnels: ${err}`, "error");
       }
     }
-
-    // Prompt user for a tunnel name for new tunnel creation
-    interface TunnelNamePrompt {
-      tunnelName: string;
-    }
-
-    const answers = await inquirer.prompt<TunnelNamePrompt>([
+    
+    // Create new tunnel
+    const tunnelName = options.name || (await inquirer.prompt([
       {
         type: "input",
         name: "tunnelName",
-        message: "Enter a name for your new Cloudflare Tunnel:",
-        validate: (input) => !!input || "Tunnel name cannot be empty.",
+        message: "Enter a name for your tunnel:",
+        validate: (input) => !!input.trim() || "Tunnel name cannot be empty.",
       },
-    ]);
-
-    const tunnelName = answers.tunnelName.trim();
+    ])).tunnelName;
+    
     try {
-      console.log(chalk.cyan(`Creating new tunnel: ${tunnelName}...`));
-      // Creates a new tunnel and prints a JSON file at ~/.cloudflared/<TUNNEL-ID>.json
-      const output = execSync(
-        `cloudflared tunnel create ${tunnelName}`
-      ).toString();
-      /*
-       * Example output to parse for TUNNEL-ID:
-       *
-       *  Created tunnel my-tunnel with id 12345678-abcd-efgh-ijkl-9876543210ab
-       *  Credentials file /Users/username/.cloudflared/12345678-abcd-efgh-ijkl-9876543210ab.json
-       */
+      log(`Creating tunnel: ${tunnelName}...`, "info");
+      const output = execSync(`cloudflared tunnel create ${tunnelName}`).toString();
+      
       const match = output.match(/Created tunnel .* with id ([a-f0-9-]+)/i);
       if (match && match[1]) {
-        config.tunnelName = tunnelName;
-        config.tunnelId = match[1];
+        const tunnelId = match[1];
+        
+        config.tunnels[tunnelId] = {
+          tunnelName,
+          tunnelId,
+          services: [],
+          createdAt: new Date().toISOString(),
+          lastUsed: new Date().toISOString(),
+        };
+        config.activeTunnel = tunnelId;
         saveConfig(config);
-        console.log(
-          chalk.green(`Tunnel created successfully! ID: ${config.tunnelId}`)
-        );
-        console.log(
-          chalk.cyan(
-            "Next step: Add services to your tunnel with 'cloudtunnel add-service'"
-          )
-        );
+        
+        log(`Tunnel created successfully! ID: ${tunnelId}`, "info");
+        log("Next: Add services with 'cloudtunnel add'", "info");
       } else {
-        console.error(
-          chalk.red("Unable to parse tunnel ID from the command output.")
-        );
-        console.log(chalk.yellow("Command output:"));
-        console.log(output);
+        log("Failed to parse tunnel ID from output.", "error");
       }
-    } catch (err) {
-      console.error(
-        chalk.red("Error running `cloudflared tunnel create`: "),
-        err
-      );
-
-      // Check for specific error patterns
-      const errorMsg = String(err);
-      if (errorMsg.includes("already exists")) {
-        console.log(
-          chalk.yellow(
-            "A tunnel with this name already exists. Try using a different name."
-          )
-        );
+    } catch (err: any) {
+      if (err.message?.includes("already exists")) {
+        log("A tunnel with this name already exists.", "error");
+      } else {
+        log(`Error creating tunnel: ${err}`, "error");
       }
-
       process.exit(1);
     }
   });
 
-// -------------------------------
-// Command: add-service
-// -------------------------------
+// Add service command
 program
-  .command("add-service")
-  .description(
-    "Add a new service (subdomain + local port) to the Cloudflare tunnel config."
-  )
-  .action(async () => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
-        )
-      );
-      process.exit(1);
-    }
-
-    // Check if the user is logged in
-    if (!isLoggedIn()) {
-      console.error(
-        chalk.red("Error: You need to log in to Cloudflare first.")
-      );
-      console.log(
-        chalk.yellow("Please run 'cloudtunnel login' before adding services.")
-      );
-      process.exit(1);
-    }
-
-    let config = loadConfig();
-    if (!config.tunnelId) {
-      console.log(
-        chalk.red(
-          "No tunnel found in config. Please run `cloudtunnel init` first."
-        )
-      );
+  .command("add")
+  .alias("add-service")
+  .description("Add a service to your tunnel")
+  .option("-h, --hostname <hostname>", "Hostname (e.g., app.example.com)")
+  .option("-p, --port <port>", "Local port number")
+  .option("-s, --protocol <protocol>", "Protocol (http/https)", "http")
+  .action(async (options: { hostname?: string; port?: string; protocol?: string }) => {
+    ensureCloudflaredInstalled();
+    ensureLoggedIn();
+    
+    const config = loadConfig();
+    const activeTunnel = getActiveTunnel(config);
+    
+    if (!activeTunnel) {
+      log("No active tunnel. Run 'cloudtunnel init' first.", "error");
       return;
     }
-
-    // If no services yet, give a more descriptive intro
-    if (config.services.length === 0) {
-      console.log(
-        chalk.cyan("You're adding your first service to the tunnel!")
-      );
-      console.log(chalk.cyan("Each service maps a hostname to a local port."));
-      console.log(
-        chalk.cyan("For example: 'app.yourdomain.com' → 'localhost:3000'\n")
-      );
-    }
-
-    interface ServicePrompt {
-      hostname: string;
-      port: string;
-      protocol: "http" | "https";
-    }
-
-    const answers = await inquirer.prompt<ServicePrompt>([
+    
+    const answers = await inquirer.prompt([
       {
         type: "input",
         name: "hostname",
-        message:
-          "Enter the full hostname (e.g., service.example.com) for this service:",
+        message: "Hostname (e.g., app.example.com):",
+        when: !options.hostname,
         validate: (input) => {
           if (!input) return "Hostname cannot be empty.";
-          // Basic hostname validation
-          const hostnameRegex =
-            /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
-          if (!hostnameRegex.test(input)) {
-            return "Please enter a valid hostname (e.g., service.example.com)";
-          }
-          // Check if hostname already exists in config
-          if (config.services.some((s) => s.hostname === input)) {
-            return "This hostname is already configured. Please use a different one.";
+          if (!validateHostname(input)) return "Invalid hostname format.";
+          if (activeTunnel.services.some(s => s.hostname === input)) {
+            return "This hostname is already configured.";
           }
           return true;
         },
@@ -467,11 +423,12 @@ program
       {
         type: "input",
         name: "port",
-        message: "Local port that this service is running on (e.g., 3000):",
+        message: "Local port:",
+        when: !options.port,
         validate: (input) => {
-          const portNum = parseInt(input, 10);
-          if (isNaN(portNum) || portNum <= 0 || portNum >= 65536) {
-            return "Port must be a valid number between 1 and 65535.";
+          const port = parseInt(input, 10);
+          if (isNaN(port) || port <= 0 || port > 65535) {
+            return "Port must be between 1 and 65535.";
           }
           return true;
         },
@@ -479,498 +436,450 @@ program
       {
         type: "list",
         name: "protocol",
-        message: "Select the protocol for this service:",
-        choices: [
-          { name: "HTTP", value: "http" },
-          { name: "HTTPS", value: "https" },
-        ],
+        message: "Protocol:",
+        choices: ["http", "https"],
+        when: !options.protocol,
         default: "http",
       },
     ]);
-
-    const { hostname, port, protocol } = answers;
-
-    // 1. Update local config
-    const newService: Service = {
-      hostname,
-      service: `${protocol}://localhost:${port}`,
-      createdAt: new Date().toISOString(),
-    };
-    config.services.push(newService);
-    saveConfig(config);
-    console.log(
-      chalk.green(
-        `Service added to local config: ${hostname} -> ${protocol}://localhost:${port}`
-      )
-    );
-
-    // 2. Create DNS route in Cloudflare
-    try {
-      console.log(chalk.cyan(`Creating DNS route for ${hostname}...`));
-      execSync(`cloudflared tunnel route dns ${config.tunnelId} ${hostname}`, {
-        stdio: "inherit",
-      } as ExecSyncOptions);
-      console.log(chalk.green(`DNS route created for ${hostname}.`));
-      console.log(
-        chalk.cyan("Note: DNS propagation may take a few minutes to complete.")
-      );
-    } catch (err) {
-      console.error(chalk.red("Error creating DNS route:"), err);
-
-      // Check specific error patterns
-      const errorMsg = String(err);
-      if (errorMsg.includes("already exists")) {
-        console.log(
-          chalk.yellow(
-            "Note: This hostname might already have a DNS record. If you continue, it will be updated to point to your tunnel."
-          )
-        );
-      } else if (errorMsg.includes("unauthorized")) {
-        console.log(
-          chalk.yellow(
-            "It seems like you may not have permission to modify DNS for this domain. Please check your Cloudflare account permissions."
-          )
-        );
-      }
-    }
-
-    // Show next steps
-    console.log(chalk.cyan("\nNext steps:"));
-    console.log(chalk.cyan("1. Start your service locally on port " + port));
-    console.log(chalk.cyan("2. Run 'cloudtunnel run' to start the tunnel"));
-    console.log(chalk.cyan("3. Access your service at https://" + hostname));
-  });
-
-// -------------------------------
-// Command: list-services
-// -------------------------------
-program
-  .command("list-services")
-  .description("List services configured for your tunnel.")
-  .option("-j, --json", "Output in JSON format")
-  .action((options: { json?: boolean }) => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
-        )
-      );
-      process.exit(1);
-    }
-
-    const config = loadConfig();
-    if (!config.tunnelId) {
-      console.log(
-        chalk.yellow(
-          "No tunnel configured. Please run `cloudtunnel init` first to set up a tunnel."
-        )
-      );
-      return;
-    }
-
-    if (!config.services || config.services.length === 0) {
-      console.log(
-        chalk.yellow(
-          "No services found for your tunnel. Add one with `cloudtunnel add-service`."
-        )
-      );
-      return;
-    }
-
-    // JSON output if requested
-    if (options.json) {
-      console.log(
-        JSON.stringify(
-          {
-            tunnel: {
-              name: config.tunnelName,
-              id: config.tunnelId,
-            },
-            services: config.services,
-          },
-          null,
-          2
-        )
-      );
-      return;
-    }
-
-    // Normal formatted output
-    console.log(
-      chalk.cyan(`Tunnel: ${config.tunnelName} (ID: ${config.tunnelId})`)
-    );
-    console.log(chalk.cyan(`Total services: ${config.services.length}`));
-    console.log(chalk.magenta("\nServices:"));
-
-    // Sort services by hostname for easier viewing
-    const sortedServices = [...config.services].sort((a, b) =>
-      a.hostname.localeCompare(b.hostname)
-    );
-
-    sortedServices.forEach((srv, idx) => {
-      console.log(
-        `  ${chalk.green(idx + 1)}. ${chalk.bold(srv.hostname)} → ${chalk.cyan(
-          srv.service
-        )}`
-      );
-      if (srv.createdAt) {
-        console.log(`     Added: ${new Date(srv.createdAt).toLocaleString()}`);
-      }
-    });
-
-    console.log(
-      chalk.cyan("\nTo run your tunnel with these services: ") +
-        chalk.yellow("cloudtunnel run")
-    );
-  });
-
-// -------------------------------
-// Command: run
-// -------------------------------
-program
-  .command("run")
-  .description("Run the tunnel (foreground). Ctrl+C to stop.")
-  .option("-d, --detach", "Run the tunnel in the background (detached mode)")
-  .action(async (options: { detach?: boolean }) => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
-        )
-      );
-      process.exit(1);
-    }
-
-    // Check if the user is logged in
-    if (!isLoggedIn()) {
-      console.error(
-        chalk.red("Error: You need to log in to Cloudflare first.")
-      );
-      console.log(
-        chalk.yellow("Please run 'cloudtunnel login' before running a tunnel.")
-      );
-      process.exit(1);
-    }
-
-    const config = loadConfig();
-    if (!config.tunnelId) {
-      console.log(
-        chalk.red(
-          "No tunnel found in config. Please run `cloudtunnel init` first."
-        )
-      );
-      return;
-    }
-
-    // Check if there are any services
-    if (!config.services || config.services.length === 0) {
-      console.log(
-        chalk.yellow(
-          "Warning: You don't have any services configured for this tunnel."
-        )
-      );
-      console.log(
-        chalk.yellow(
-          "The tunnel will run but won't route any traffic. Add services with 'cloudtunnel add-service'."
-        )
-      );
-
-      interface ProceedPrompt {
-        proceed: boolean;
-      }
-
-      const answers = await inquirer.prompt<ProceedPrompt>([
+    
+    const hostname = options.hostname || answers.hostname;
+    const port = options.port || answers.port;
+    const protocol = options.protocol || answers.protocol;
+    
+    // Check if service is running
+    const isRunning = await checkServiceHealth(port);
+    if (!isRunning) {
+      log(`Warning: No service detected on port ${port}`, "warn");
+      const proceed = await inquirer.prompt([
         {
           type: "confirm",
-          name: "proceed",
-          message:
-            "Do you want to continue running the tunnel without any services?",
-          default: false,
+          name: "continue",
+          message: "Continue anyway?",
+          default: true,
         },
       ]);
-
-      if (!answers.proceed) {
-        console.log(
-          chalk.cyan(
-            "Tunnel startup cancelled. Add services first with 'cloudtunnel add-service'."
-          )
-        );
-        return;
-      }
+      if (!proceed.continue) return;
     }
-
-    // Generate a config file for cloudflared
-    const configYamlPath = path.join(CONFIG_DIR, `${config.tunnelId}.yml`);
+    
+    // Add to config
+    const service: Service = {
+      hostname,
+      service: `${protocol}://localhost:${port}`,
+      protocol,
+      port,
+      createdAt: new Date().toISOString(),
+    };
+    
+    activeTunnel.services.push(service);
+    saveConfig(config);
+    
+    // Create DNS route
     try {
-      // Create ingress rules for all services
-      const ingressRules: Array<{ hostname?: string; service: string }> =
-        config.services.map((service) => ({
-          hostname: service.hostname,
-          service: service.service,
-        }));
-
-      // Add catch-all rule at the end
-      ingressRules.push({
-        service: "http_status:404",
+      log(`Creating DNS route for ${hostname}...`, "info");
+      execSync(`cloudflared tunnel route dns ${activeTunnel.tunnelId} ${hostname}`, {
+        stdio: "inherit",
       });
-
-      const cloudflaredConfig = {
-        tunnel: config.tunnelId,
-        credentials: path.join(CONFIG_DIR, `${config.tunnelId}.json`),
-        ingress: ingressRules,
-      };
-
-      // Write the YAML config
-      fs.writeFileSync(configYamlPath, YAML.stringify(cloudflaredConfig));
-      console.log(chalk.green(`Generated config file at ${configYamlPath}`));
-    } catch (err) {
-      console.error(chalk.red("Error generating config file:"), err);
-      console.log(
-        chalk.yellow("Falling back to running tunnel without a config file...")
-      );
-    }
-
-    console.log(
-      chalk.cyan(
-        `Starting tunnel: ${config.tunnelName} (ID: ${config.tunnelId})...`
-      )
-    );
-
-    if (config.services && config.services.length > 0) {
-      console.log(chalk.green("The following services will be available:"));
-      config.services.forEach((srv) => {
-        console.log(
-          `  - https://${chalk.bold(srv.hostname)} → ${chalk.cyan(srv.service)}`
-        );
-      });
-    }
-
-    try {
-      const runCommand = fs.existsSync(configYamlPath)
-        ? `cloudflared tunnel --config ${configYamlPath} run`
-        : `cloudflared tunnel run ${config.tunnelId}`;
-
-      console.log(chalk.cyan("Starting tunnel with command:"));
-      console.log(chalk.yellow(`  ${runCommand}`));
-
-      if (options.detach) {
-        // Run in background mode
-        console.log(chalk.cyan("Running in background mode..."));
-        const detachedProcess = exec(runCommand, (error, stdout, stderr) => {
-          if (error) {
-            console.error(`Error: ${error.message}`);
-            return;
-          }
-          if (stderr) {
-            console.error(`stderr: ${stderr}`);
-            return;
-          }
-          console.log(`stdout: ${stdout}`);
-        });
-
-        // Don't wait for the process and let it run in background
-        detachedProcess.unref();
-
-        console.log(chalk.green("Tunnel is now running in the background."));
-        console.log(
-          chalk.yellow("Note: You'll need to manually stop the process later.")
-        );
-      } else {
-        // Run in foreground mode
-        console.log(
-          chalk.cyan("Running in foreground mode. Press Ctrl+C to stop.")
-        );
-        execSync(runCommand, {
-          stdio: "inherit",
-        } as ExecSyncOptions);
-      }
-    } catch (err) {
-      // Only treat as error if we're not in detached mode (where Ctrl+C is normal)
-      if (!options.detach) {
-        console.error(chalk.red("Error running tunnel:"), err);
-
-        // Check for specific error messages
-        const errorMsg = String(err);
-        if (errorMsg.includes("already running")) {
-          console.log(
-            chalk.yellow(
-              "It looks like this tunnel is already running in another process."
-            )
-          );
-          console.log(
-            chalk.yellow(
-              "You may need to stop that process first or use a different tunnel."
-            )
-          );
-        } else if (errorMsg.includes("not found")) {
-          console.log(
-            chalk.yellow(
-              "The tunnel ID may not exist or may have been deleted."
-            )
-          );
-          console.log(
-            chalk.yellow(
-              "Try running 'cloudtunnel init' to create a new tunnel."
-            )
-          );
-        } else if (errorMsg.includes("credentials")) {
-          console.log(
-            chalk.yellow(
-              "Credentials file may be missing. Try re-creating the tunnel with 'cloudtunnel init'."
-            )
-          );
-        }
-      }
+      log(`✓ Service added: ${hostname} → ${protocol}://localhost:${port}`, "info");
+    } catch (err: any) {
+      log(`Warning: DNS route creation failed: ${err.message}`, "warn");
+      log("The service was added to config but DNS may need manual setup.", "warn");
     }
   });
 
-// -------------------------------
-// Command: version
-// -------------------------------
+// List command
 program
-  .command("version")
-  .description("Show the CLI version")
-  .action(() => {
-    // Using require for package.json since it's a direct sibling to this file at runtime
-    const packageJson = require("../package.json");
-    console.log(`cloudtunnel version: ${chalk.green(packageJson.version)}`);
-
-    try {
-      const cloudflaredVersion = execSync("cloudflared --version")
-        .toString()
-        .trim();
-      console.log(`cloudflared version: ${chalk.green(cloudflaredVersion)}`);
-    } catch (err) {
-      console.log(`cloudflared: ${chalk.red("Not installed or not in PATH")}`);
-    }
-  });
-
-// -------------------------------
-// Command: stop
-// -------------------------------
-program
-  .command("stop")
-  .description("Stop a running tunnel")
-  .option("-f, --force", "Force kill the tunnel process")
-  .action(async (options: { force?: boolean }) => {
-    // First check if cloudflared is installed
-    if (!checkCloudflaredInstalled()) {
-      console.error(
-        chalk.red("Error: cloudflared is not installed or not in the PATH.")
-      );
-      console.log(
-        chalk.yellow(
-          "Please install cloudflared first. Run 'cloudtunnel login' for installation instructions."
-        )
-      );
-      process.exit(1);
-    }
-
+  .command("list")
+  .alias("list-services")
+  .description("List all tunnels and services")
+  .option("-j, --json", "Output as JSON")
+  .action((options: { json?: boolean }) => {
     const config = loadConfig();
-    if (!config.tunnelId) {
-      console.log(
-        chalk.red(
-          "No tunnel found in config. Please run `cloudtunnel init` first."
-        )
-      );
+    
+    if (options.json) {
+      console.log(JSON.stringify(config, null, 2));
       return;
     }
-
-    console.log(
-      chalk.cyan(
-        `Looking for running tunnel: ${config.tunnelName} (ID: ${config.tunnelId})...`
-      )
-    );
-
-    try {
-      // Get the list of running processes that match cloudflared and our tunnel ID
-      let command: string;
-      let processInfo: string;
-
-      if (process.platform === "win32") {
-        // Windows
-        command = `tasklist /FI "IMAGENAME eq cloudflared.exe" /FO CSV`;
-        processInfo = execSync(command).toString();
-
-        if (!processInfo.includes("cloudflared.exe")) {
-          console.log(chalk.yellow("No running tunnel process found."));
-          return;
-        }
-      } else {
-        // Unix-like (macOS, Linux)
-        command = `ps aux | grep "cloudflared tunnel.*${config.tunnelId}" | grep -v grep`;
-        try {
-          processInfo = execSync(command).toString();
-        } catch (err) {
-          // If the grep command returns nothing, it will exit with code 1
-          console.log(chalk.yellow("No running tunnel process found."));
-          return;
-        }
+    
+    const tunnelCount = Object.keys(config.tunnels).length;
+    if (tunnelCount === 0) {
+      log("No tunnels configured. Run 'cloudtunnel init' to get started.", "warn");
+      return;
+    }
+    
+    console.log(chalk.bold(`\nConfigured Tunnels (${tunnelCount}):`));
+    
+    for (const [tunnelId, tunnel] of Object.entries(config.tunnels)) {
+      const isActive = config.activeTunnel === tunnelId;
+      const status = getTunnelStatus(tunnelId);
+      const statusIcon = status === "running" ? "🟢" : status === "stopped" ? "🔴" : "🟡";
+      
+      console.log(`\n${isActive ? chalk.green("► ") : "  "}${chalk.bold(tunnel.tunnelName)} ${statusIcon}`);
+      console.log(`  ID: ${chalk.dim(tunnelId)}`);
+      console.log(`  Services: ${tunnel.services.length}`);
+      
+      if (tunnel.services.length > 0) {
+        tunnel.services.forEach((srv, idx) => {
+          console.log(`    ${idx + 1}. ${chalk.cyan(srv.hostname)} → ${srv.service}`);
+        });
       }
-
-      // Extract PID from the process info
-      let pid: string | undefined;
-
-      if (process.platform === "win32") {
-        // Windows CSV format: "Image Name","PID",...
-        const matches = processInfo.match(/"cloudflared\.exe","\d+"/);
-        if (matches && matches[0]) {
-          pid = matches[0].split('"')[3];
-        }
-      } else {
-        // Unix-like format: user PID %CPU...
-        const lines = processInfo
-          .split("\n")
-          .filter((line) => line.trim() !== "");
-        if (lines.length > 0) {
-          const parts = lines[0].split(/\s+/);
-          if (parts.length > 1) {
-            pid = parts[1];
-          }
-        }
-      }
-
-      if (!pid) {
-        console.log(chalk.yellow("Couldn't identify the tunnel process ID."));
-        return;
-      }
-
-      // Confirm with the user before killing
-      if (!options.force) {
-        const answers = await inquirer.prompt([
-          {
-            type: "confirm",
-            name: "confirm",
-            message: `Found tunnel process (PID: ${pid}). Stop it?`,
-            default: true,
-          },
-        ]);
-
-        if (!answers.confirm) {
-          console.log(chalk.yellow("Operation cancelled."));
-          return;
-        }
-      }
-
-      // Kill the process
-      console.log(chalk.cyan(`Stopping tunnel process (PID: ${pid})...`));
-
-      if (process.platform === "win32") {
-        // Windows
-        execSync(`taskkill /PID ${pid} /F`);
-      } else {
-        // Unix-like (macOS, Linux)
-        execSync(`kill -9 ${pid}`);
-      }
-    } catch (err) {
-      console.error(chalk.red("Error stopping tunnel:"), err);
+    }
+    
+    if (config.activeTunnel) {
+      console.log(`\n${chalk.dim("Active tunnel:")} ${config.tunnels[config.activeTunnel].tunnelName}`);
     }
   });
+
+// Remove service command
+program
+  .command("remove")
+  .alias("remove-service")
+  .description("Remove a service from your tunnel")
+  .action(async () => {
+    const config = loadConfig();
+    const activeTunnel = getActiveTunnel(config);
+    
+    if (!activeTunnel || activeTunnel.services.length === 0) {
+      log("No services to remove.", "warn");
+      return;
+    }
+    
+    const choices = activeTunnel.services.map((srv, idx) => ({
+      name: `${srv.hostname} → ${srv.service}`,
+      value: idx,
+    }));
+    
+    const answer = await inquirer.prompt([
+      {
+        type: "list",
+        name: "serviceIndex",
+        message: "Select a service to remove:",
+        choices,
+      },
+    ]);
+    
+    const removed = activeTunnel.services.splice(answer.serviceIndex, 1)[0];
+    saveConfig(config);
+    
+    log(`Removed service: ${removed.hostname}`, "info");
+    log("Note: DNS records were not removed. You may need to clean them up manually.", "warn");
+  });
+
+// Switch tunnel command
+program
+  .command("switch")
+  .description("Switch active tunnel")
+  .action(async () => {
+    const config = loadConfig();
+    const tunnelIds = Object.keys(config.tunnels);
+    
+    if (tunnelIds.length === 0) {
+      log("No tunnels configured.", "warn");
+      return;
+    }
+    
+    if (tunnelIds.length === 1) {
+      log("Only one tunnel configured.", "info");
+      return;
+    }
+    
+    const choices = tunnelIds.map(id => ({
+      name: `${config.tunnels[id].tunnelName} (${id}) ${id === config.activeTunnel ? "[current]" : ""}`,
+      value: id,
+    }));
+    
+    const answer = await inquirer.prompt([
+      {
+        type: "list",
+        name: "tunnelId",
+        message: "Select tunnel to switch to:",
+        choices,
+      },
+    ]);
+    
+    config.activeTunnel = answer.tunnelId;
+    config.tunnels[answer.tunnelId].lastUsed = new Date().toISOString();
+    saveConfig(config);
+    
+    log(`Switched to tunnel: ${config.tunnels[answer.tunnelId].tunnelName}`, "info");
+  });
+
+// Run command
+program
+  .command("run")
+  .description("Run the active tunnel")
+  .option("-d, --detach", "Run in background")
+  .option("-t, --tunnel <id>", "Run specific tunnel by ID")
+  .action(async (options: { detach?: boolean; tunnel?: string }) => {
+    ensureCloudflaredInstalled();
+    ensureLoggedIn();
+    
+    const config = loadConfig();
+    const tunnelId = options.tunnel || config.activeTunnel;
+    
+    if (!tunnelId || !config.tunnels[tunnelId]) {
+      log("No tunnel selected. Run 'cloudtunnel init' first.", "error");
+      return;
+    }
+    
+    const tunnel = config.tunnels[tunnelId];
+    
+    // Check if already running
+    const status = getTunnelStatus(tunnelId);
+    if (status === "running") {
+      log(`Tunnel ${tunnel.tunnelName} is already running.`, "warn");
+      return;
+    }
+    
+    // Generate config file
+    const configPath = path.join(CONFIG_DIR, `tunnel-${tunnelId}.yml`);
+    
+    const ingressRules = tunnel.services.map(srv => ({
+      hostname: srv.hostname,
+      service: srv.service,
+    }));
+    
+    ingressRules.push({ hostname: "*.localhost", service: "http_status:404" });
+    
+    const tunnelConfig = {
+      tunnel: tunnelId,
+      credentials: path.join(CONFIG_DIR, `${tunnelId}.json`),
+      ingress: ingressRules,
+    };
+    
+    fs.writeFileSync(configPath, YAML.stringify(tunnelConfig));
+    
+    log(`Starting tunnel: ${tunnel.tunnelName}`, "info");
+    
+    if (tunnel.services.length > 0) {
+      console.log(chalk.green("\nServices:"));
+      for (const srv of tunnel.services) {
+        const isHealthy = await checkServiceHealth(srv.port || "80");
+        const healthIcon = isHealthy ? "✓" : "✗";
+        console.log(`  ${healthIcon} https://${chalk.bold(srv.hostname)} → ${srv.service}`);
+      }
+    }
+    
+    try {
+      if (options.detach) {
+        // Run detached
+        const spawnOptions: SpawnOptions = {
+          detached: true,
+          stdio: "ignore",
+        };
+        
+        const child = spawn("cloudflared", ["tunnel", "--config", configPath, "run"], spawnOptions);
+        child.unref();
+        
+        log("\nTunnel started in background.", "info");
+        log("Use 'cloudtunnel stop' to stop it.", "info");
+      } else {
+        // Run in foreground
+        log("\nPress Ctrl+C to stop the tunnel.", "info");
+        execSync(`cloudflared tunnel --config ${configPath} run`, { stdio: "inherit" });
+      }
+    } catch (err: any) {
+      if (!err.message?.includes("SIGINT")) {
+        log(`Error running tunnel: ${err.message}`, "error");
+      }
+    }
+  });
+
+// Stop command
+program
+  .command("stop")
+  .description("Stop running tunnel(s)")
+  .option("-a, --all", "Stop all running tunnels")
+  .option("-t, --tunnel <id>", "Stop specific tunnel")
+  .action(async (options: { all?: boolean; tunnel?: string }) => {
+    const config = loadConfig();
+    
+    let tunnelIds: string[] = [];
+    
+    if (options.all) {
+      tunnelIds = Object.keys(config.tunnels);
+    } else if (options.tunnel) {
+      tunnelIds = [options.tunnel];
+    } else if (config.activeTunnel) {
+      tunnelIds = [config.activeTunnel];
+    }
+    
+    if (tunnelIds.length === 0) {
+      log("No tunnel specified.", "error");
+      return;
+    }
+    
+    for (const tunnelId of tunnelIds) {
+      const tunnel = config.tunnels[tunnelId];
+      if (!tunnel) continue;
+      
+      log(`Stopping tunnel: ${tunnel.tunnelName}...`, "info");
+      
+      try {
+        if (process.platform === "win32") {
+          execSync(`taskkill /F /FI "WINDOWTITLE eq cloudflared*${tunnelId}*"`);
+        } else {
+          execSync(`pkill -f "cloudflared.*${tunnelId}"`);
+        }
+        log(`Stopped: ${tunnel.tunnelName}`, "info");
+      } catch (err) {
+        log(`Could not stop ${tunnel.tunnelName} (may not be running)`, "warn");
+      }
+    }
+  });
+
+// Status command
+program
+  .command("status")
+  .description("Show tunnel status")
+  .action(() => {
+    ensureCloudflaredInstalled();
+    
+    const config = loadConfig();
+    
+    if (Object.keys(config.tunnels).length === 0) {
+      log("No tunnels configured.", "warn");
+      return;
+    }
+    
+    console.log(chalk.bold("\nTunnel Status:"));
+    
+    for (const [tunnelId, tunnel] of Object.entries(config.tunnels)) {
+      const status = getTunnelStatus(tunnelId);
+      const statusText = 
+        status === "running" ? chalk.green("Running") :
+        status === "stopped" ? chalk.red("Stopped") :
+        chalk.yellow("Unknown");
+      
+      console.log(`\n${tunnel.tunnelName}: ${statusText}`);
+      console.log(`  ID: ${chalk.dim(tunnelId)}`);
+      console.log(`  Services: ${tunnel.services.length}`);
+    }
+  });
+
+// Export command
+program
+  .command("export")
+  .description("Export tunnel configuration")
+  .option("-t, --tunnel <id>", "Export specific tunnel")
+  .action((options: { tunnel?: string }) => {
+    const config = loadConfig();
+    
+    if (options.tunnel) {
+      const tunnel = config.tunnels[options.tunnel];
+      if (!tunnel) {
+        log("Tunnel not found.", "error");
+        return;
+      }
+      console.log(JSON.stringify(tunnel, null, 2));
+    } else {
+      console.log(JSON.stringify(config, null, 2));
+    }
+  });
+
+// Import command
+program
+  .command("import <file>")
+  .description("Import tunnel configuration from file")
+  .action(async (file: string) => {
+    try {
+      const importData = JSON.parse(fs.readFileSync(file, "utf8"));
+      const config = loadConfig();
+      
+      // Import single tunnel
+      if (importData.tunnelId && importData.tunnelName) {
+        config.tunnels[importData.tunnelId] = importData;
+        saveConfig(config);
+        log(`Imported tunnel: ${importData.tunnelName}`, "info");
+      }
+      // Import full config
+      else if (importData.tunnels) {
+        Object.assign(config.tunnels, importData.tunnels);
+        saveConfig(config);
+        log(`Imported ${Object.keys(importData.tunnels).length} tunnels`, "info");
+      } else {
+        log("Invalid import file format.", "error");
+      }
+    } catch (err) {
+      log(`Import error: ${err}`, "error");
+    }
+  });
+
+// Clean command
+program
+  .command("clean")
+  .description("Clean up invalid tunnels from config")
+  .action(async () => {
+    ensureCloudflaredInstalled();
+    ensureLoggedIn();
+    
+    const config = loadConfig();
+    
+    try {
+      const output = execSync("cloudflared tunnel list --output json").toString();
+      const remoteTunnels: Tunnel[] = JSON.parse(output);
+      const remoteTunnelIds = new Set(remoteTunnels.map(t => t.id));
+      
+      const invalidTunnels = Object.keys(config.tunnels).filter(
+        id => !remoteTunnelIds.has(id)
+      );
+      
+      if (invalidTunnels.length === 0) {
+        log("All tunnels in config are valid.", "info");
+        return;
+      }
+      
+      log(`Found ${invalidTunnels.length} invalid tunnel(s) in config.`, "warn");
+      
+      const answer = await inquirer.prompt([
+        {
+          type: "confirm",
+          name: "remove",
+          message: "Remove invalid tunnels from config?",
+          default: true,
+        },
+      ]);
+      
+      if (answer.remove) {
+        invalidTunnels.forEach(id => {
+          log(`Removing: ${config.tunnels[id].tunnelName}`, "info");
+          delete config.tunnels[id];
+        });
+        
+        if (config.activeTunnel && invalidTunnels.includes(config.activeTunnel)) {
+          config.activeTunnel = undefined;
+        }
+        
+        saveConfig(config);
+        log("Config cleaned.", "info");
+      }
+    } catch (err) {
+      log(`Error checking tunnels: ${err}`, "error");
+    }
+  });
+
+// Version command
+program
+  .command("version")
+  .description("Show version information")
+  .action(() => {
+    console.log(`cloudtunnel: ${chalk.green(getPackageVersion())}`);
+    
+    try {
+      const cloudflaredVersion = execSync("cloudflared --version").toString().trim();
+      console.log(`cloudflared: ${chalk.green(cloudflaredVersion)}`);
+    } catch (err) {
+      console.log(`cloudflared: ${chalk.red("Not installed")}`);
+    }
+    
+    console.log(`Config version: ${chalk.green(CONFIG_VERSION)}`);
+    console.log(`Config location: ${chalk.dim(CONFIG_FILE)}`);
+  });
+
+// Parse and execute
+program.parse(process.argv);
+
+// Show help if no command provided
+if (!process.argv.slice(2).length) {
+  program.outputHelp();
+}
